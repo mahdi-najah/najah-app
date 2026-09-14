@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
-  BookOpen, Sparkles, TrendingUp, Play, CheckCircle2, Circle,
+  BookOpen, Sparkles, Play, CheckCircle2, Circle,
   ArrowRight, Youtube, Send, Loader2, Star,
   FlaskConical, Dna, Calculator, Languages,
-  Dumbbell, X, HelpCircle, GraduationCap, Landmark, Flame, ThumbsUp, ThumbsDown,
-  User, Phone, Lock, MapPin, CreditCard, KeyRound, ShieldCheck
+  Dumbbell, X, GraduationCap, Landmark, Flame, ThumbsUp, ThumbsDown,
+  User, Phone, Lock, MapPin, CreditCard, KeyRound, ShieldCheck, Brain, Share2, Eye, EyeOff, Info
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -30,7 +30,20 @@ const WILAYAS = [
   "برج باجي مختار","أولاد جلال","بني عباس","عين صالح","عين قزام","تقرت","جانت","المغير","المنيعة",
 ];
 
-const SUBSCRIPTION_PRICE = "3000 دج"; // سعر تجريبي — سهل تغييره لاحقاً
+const SUBSCRIPTION_PRICE = "4000 دج"; // السعر الرسمي للاشتراك السنوي
+
+/* ---------------------------------------------------------------
+   تخزين محلي حقيقي (localStorage) — يشتغل على الموقع المنشور فعلياً
+--------------------------------------------------------------- */
+function lsGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) {}
+}
+function lsRemove(key) {
+  try { localStorage.removeItem(key); } catch (e) {}
+}
 
 /* ---------------------------------------------------------------
    ربط Firebase (Firestore) — مشروع نجاح-تطبيق
@@ -49,6 +62,8 @@ async function syncAccountToFirestore(account) {
       phone: { stringValue: account.phone || "" },
       wilaya: { stringValue: account.wilaya || "" },
       subscribedUntil: { stringValue: account.subscribedUntil || "" },
+      password: { stringValue: account.password || "" },
+      activeDevice: { stringValue: account.activeDevice || "" },
     };
     const res = await fetch(url, {
       method: "PATCH",
@@ -60,6 +75,65 @@ async function syncAccountToFirestore(account) {
     console.error("تعذّر الحفظ في Firebase", e);
     return false;
   }
+}
+
+// جلب حساب تلميذ من Firestore عبر رقم هاتفه — يُستعمل عند التسجيل (للتأكد أن الرقم غير مستعمل) وعند تسجيل الدخول
+async function fetchStudentFromFirestore(phone) {
+  const studentId = phone.replace(/[^0-9]/g, "");
+  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/students/${studentId}?key=${FIREBASE_API_KEY}`;
+  const res = await fetch(url);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("network-error");
+  const data = await res.json();
+  const obj = {};
+  Object.entries(data.fields || {}).forEach(([k, v]) => {
+    obj[k] = v.stringValue !== undefined ? v.stringValue : "";
+  });
+  return obj;
+}
+
+/* ---------------------------------------------------------------
+   إرسال SMS حقيقي عبر SMS Gateway for Android (sms-gate.app)
+--------------------------------------------------------------- */
+const SMS_GATE_USERNAME = "JX6S5J";
+const SMS_GATE_PASSWORD = "k46ng2_j4aoklx";
+
+// تحويل رقم هاتف جزائري (0XXXXXXXXX) إلى صيغة دولية (+213XXXXXXXXX)
+function toInternationalPhone(phone) {
+  const digits = (phone || "").replace(/[^0-9]/g, "");
+  if (digits.startsWith("213")) return "+" + digits;
+  if (digits.startsWith("0")) return "+213" + digits.slice(1);
+  return "+213" + digits;
+}
+
+// إرسال رمز التحقق عبر SMS حقيقي؛ يرجع true عند النجاح، false عند أي فشل (بدون توقف التسجيل)
+async function sendRealSms(phone, code) {
+  try {
+    const res = await fetch("https://api.sms-gate.app/3rdparty/v1/messages", {
+      method: "POST",
+      headers: {
+        Authorization: "Basic " + btoa(`${SMS_GATE_USERNAME}:${SMS_GATE_PASSWORD}`),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        textMessage: { text: `رمزك في تطبيق ناجح بإذن الله هو: ${code}` },
+        phoneNumbers: [toInternationalPhone(phone)],
+      }),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("تعذّر إرسال SMS حقيقي، سيُعرض الرمز على الشاشة بدلاً منه", e);
+    return false;
+  }
+}
+
+// معرّف فريد لهذا الجهاز، يُنشأ مرة واحدة ويُحفظ محلياً
+function getDeviceId() {
+  let id = lsGet("deviceId");
+  if (id) return id;
+  id = "dev_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  lsSet("deviceId", id);
+  return id;
 }
 
 /* ---------------------------------------------------------------
@@ -169,6 +243,24 @@ const SUBJECTS = [
     ],
   },
   {
+    id: "french",
+    name: "اللغة الفرنسية",
+    icon: Languages,
+    color: "#154360",
+    coef: 2,
+    chapters: [
+      "Le texte argumentatif",
+      "L'expression de la cause et de la conséquence",
+      "Le discours rapporté",
+      "Le texte explicatif scientifique",
+    ],
+    teachers: ["أساتذة الفرنسية بكالوريا"],
+    exercises: [
+      { q: "Reformulez cette phrase en discours indirect : « Je viendrai demain », dit-il.", a: "Il a dit qu'il viendrait le lendemain — on adapte le temps du verbe et les indicateurs de temps." },
+    ],
+    bac: [],
+  },
+  {
     id: "english",
     name: "اللغة الإنجليزية",
     icon: Languages,
@@ -210,7 +302,7 @@ const SUBJECTS = [
   },
   {
     id: "history",
-    name: "التاريخ",
+    name: "التاريخ والجغرافيا",
     icon: Landmark,
     color: "#6E2C00",
     coef: 2,
@@ -221,8 +313,26 @@ const SUBJECTS = [
       "الثورة التحريرية الجزائرية",
       "القضية الفلسطينية",
       "النظام العالمي الجديد",
+      "العولمة والتكتلات الاقتصادية",
+      "المشكلات البيئية الكبرى",
     ],
-    teachers: ["أساتذة التاريخ بكالوريا"],
+    teachers: ["أساتذة التاريخ والجغرافيا بكالوريا"],
+    exercises: [],
+    bac: [],
+  },
+  {
+    id: "philo",
+    name: "الفلسفة",
+    icon: Brain,
+    color: "#5B2C6F",
+    coef: 2,
+    chapters: [
+      "إشكالية الشخص والهوية",
+      "إشكالية المعرفة العلمية",
+      "إشكالية الدولة والمجتمع",
+      "منهجية السؤال والجدل الفلسفي",
+    ],
+    teachers: ["أساتذة الفلسفة بكالوريا"],
     exercises: [],
     bac: [],
   },
@@ -249,17 +359,15 @@ async function askAI(systemPrompt, apiMessages) {
     .join("\n");
 }
 
-async function recordAiFeedback(subjectId, vote) {
+function recordAiFeedback(subjectId, vote) {
   try {
     let current = {};
-    try {
-      const res = await window.storage.get("aiFeedback", false);
-      if (res && res.value) current = JSON.parse(res.value);
-    } catch (e) {}
+    const raw = lsGet("aiFeedback");
+    if (raw) current = JSON.parse(raw);
     const entry = current[subjectId] || { up: 0, down: 0 };
     entry[vote] = (entry[vote] || 0) + 1;
     current[subjectId] = entry;
-    await window.storage.set("aiFeedback", JSON.stringify(current), false);
+    lsSet("aiFeedback", JSON.stringify(current));
   } catch (e) {
     console.error("تعذّر حفظ التقييم", e);
   }
@@ -335,8 +443,11 @@ export default function NajahApp() {
   const [view, setView] = useState("loading");
   const [name, setName] = useState("");
   const [account, setAccount] = useState(null);
+  const [deviceId, setDeviceId] = useState(null);
   const [pendingSignup, setPendingSignup] = useState(null);
   const [pendingCode, setPendingCode] = useState(null);
+  const [smsSent, setSmsSent] = useState(false);
+  const [smsSending, setSmsSending] = useState(false);
   const [activeSubject, setActiveSubject] = useState(null);
   const [activeChapter, setActiveChapter] = useState(null);
   const [exMode, setExMode] = useState("exercises"); // "exercises" | "bac"
@@ -347,15 +458,15 @@ export default function NajahApp() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await window.storage.get("progress", false);
-        if (res && res.value) setProgress(JSON.parse(res.value));
+        const raw = lsGet("progress");
+        if (raw) setProgress(JSON.parse(raw));
       } catch (e) {}
       try {
         const today = new Date().toISOString().slice(0, 10);
         let data = null;
         try {
-          const res3 = await window.storage.get("dailyStreak", false);
-          if (res3 && res3.value) data = JSON.parse(res3.value);
+          const raw3 = lsGet("dailyStreak");
+          if (raw3) data = JSON.parse(raw3);
         } catch (e) {}
         if (!data) {
           data = { lastDate: today, streak: 1 };
@@ -364,29 +475,34 @@ export default function NajahApp() {
           data = diffDays === 1 ? { lastDate: today, streak: data.streak + 1 } : { lastDate: today, streak: 1 };
         }
         setStreak(data.streak);
-        await window.storage.set("dailyStreak", JSON.stringify(data), false);
+        lsSet("dailyStreak", JSON.stringify(data));
       } catch (e) {}
 
       // التحقق من وجود حساب واشتراك سابق
+      const thisDeviceId = getDeviceId();
+      setDeviceId(thisDeviceId);
       let acc = null;
       try {
-        const res4 = await window.storage.get("account", false);
-        if (res4 && res4.value) acc = JSON.parse(res4.value);
+        const raw4 = lsGet("account");
+        if (raw4) acc = JSON.parse(raw4);
       } catch (e) {}
+      let determinedView;
       if (!acc) {
-        setView("signup");
+        determinedView = "entry";
       } else {
         setAccount(acc);
         setName(acc.firstName);
         const stillActive = acc.subscribedUntil && new Date(acc.subscribedUntil) > new Date();
-        setView(stillActive ? "subjects" : "subscribe");
+        determinedView = stillActive ? "subjects" : "subscribe";
       }
+      await new Promise((resolve) => setTimeout(resolve, 900)); // مدة عرض شاشة البداية
+      setView(determinedView);
     })();
   }, []);
 
   const saveProgress = async (next) => {
     setProgress(next);
-    try { await window.storage.set("progress", JSON.stringify(next), false); } catch (e) {}
+    try { lsSet("progress", JSON.stringify(next)); } catch (e) {}
   };
 
   const toggleChapter = (subjectId, idx) => {
@@ -395,49 +511,93 @@ export default function NajahApp() {
     saveProgress({ ...progress, [subjectId]: Array.from(current) });
   };
 
-  // الخطوة 1: استلام بيانات التسجيل وتوليد رمز تحقق تجريبي
-  const submitSignup = (data) => {
-    const code = String(Math.floor(1000 + Math.random() * 9000));
+  // الخطوة 1: التأكد أن الرقم غير مسجل من قبل، ثم الانتقال للاشتراك (الدفع)
+  const submitSignup = async (data) => {
+    try {
+      const existing = await fetchStudentFromFirestore(data.phone);
+      if (existing) {
+        return "هذا الرقم مسجل من قبل. اضغط \"سجّل الدخول\" بدل إنشاء حساب جديد.";
+      }
+    } catch (e) {
+      console.warn("تعذّر التحقق من الرقم مسبقاً، سيتم المتابعة بدون التحقق", e);
+    }
     setPendingSignup(data);
-    setPendingCode(code);
-    setView("verify");
+    setView("subscribe");
+    return null;
   };
 
-  // الخطوة 2: التحقق من الرمز ثم الانتقال للاشتراك
+  // تسجيل الدخول لحساب موجود من جهاز جديد — يُرفض إذا كان الحساب مفعّلاً على جهاز آخر حالياً
+  const submitLogin = async (phone, password) => {
+    let student;
+    try {
+      student = await fetchStudentFromFirestore(phone);
+    } catch (e) {
+      return "تعذّر الاتصال، تأكد من الإنترنت وأعد المحاولة.";
+    }
+    if (!student) return "هذا الرقم غير مسجل. سجّل حساباً جديداً أولاً.";
+    if (student.password !== password) return "كلمة السر غير صحيحة.";
+    if (student.activeDevice && student.activeDevice !== deviceId) {
+      return "هذا الحساب مسجَّل الدخول من جهاز آخر حالياً. سجّل الخروج من ذلك الجهاز أولاً، ثم أعد المحاولة هنا.";
+    }
+    const acc = { ...student, activeDevice: deviceId };
+    setAccount(acc);
+    setName(acc.firstName);
+    try { lsSet("account", JSON.stringify(acc)); } catch (e) {}
+    await syncAccountToFirestore(acc);
+    const stillActive = acc.subscribedUntil && new Date(acc.subscribedUntil) > new Date();
+    setView(stillActive ? "subjects" : "subscribe");
+    return null;
+  };
+
+  // الخطوة 2: بعد الدفع، توليد رمز تحقق وإرساله (تجريبياً يظهر على الشاشة)
+  const startVerification = async () => {
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    setPendingCode(code);
+    setSmsSending(true);
+    setView("verify");
+    const ok = await sendRealSms(pendingSignup.phone, code);
+    setSmsSent(ok);
+    setSmsSending(false);
+  };
+
+  // الخطوة 3: التحقق من الرمز، وإن صح نفعّل الاشتراك وندخل التطبيق
   const submitVerify = (code) => {
     if (code === pendingCode) {
-      setView("subscribe");
+      completeSubscription();
       return true;
     }
     return false;
   };
 
-  // الخطوة 3: تفعيل الاشتراك السنوي وحفظ الحساب
+  // تفعيل الاشتراك السنوي وحفظ الحساب (بعد نجاح التحقق من الرمز) — يربط الحساب بهذا الجهاز
   const completeSubscription = async () => {
     const until = new Date();
     until.setDate(until.getDate() + 365);
-    const acc = { ...pendingSignup, subscribedUntil: until.toISOString() };
+    const acc = { ...pendingSignup, subscribedUntil: until.toISOString(), activeDevice: deviceId };
     setAccount(acc);
     setName(acc.firstName);
-    try { await window.storage.set("account", JSON.stringify(acc), false); } catch (e) {}
+    try { lsSet("account", JSON.stringify(acc)); } catch (e) {}
     await syncAccountToFirestore(acc);
     setView("welcome");
   };
 
-  // تجديد الاشتراك لحساب موجود سابقاً
+  // تجديد الاشتراك لحساب موجود سابقاً (نفس الجهاز)
   const renewSubscription = async () => {
     const until = new Date();
     until.setDate(until.getDate() + 365);
-    const acc = { ...account, subscribedUntil: until.toISOString() };
+    const acc = { ...account, subscribedUntil: until.toISOString(), activeDevice: deviceId };
     setAccount(acc);
-    try { await window.storage.set("account", JSON.stringify(acc), false); } catch (e) {}
+    try { lsSet("account", JSON.stringify(acc)); } catch (e) {}
     await syncAccountToFirestore(acc);
     setView("welcome");
   };
 
-  // إعادة ضبط الحساب المسجل محلياً (باش يقدر التلميذ يسجل من جديد بمعلومات صحيحة)
-  const resetAccount = async () => {
-    try { await window.storage.delete("account", false); } catch (e) {}
+  // تسجيل الخروج: يحرر قفل الجهاز في Firebase حتى يقدر التلميذ يدخل من جهاز آخر
+  const logout = async () => {
+    if (account) {
+      try { await syncAccountToFirestore({ ...account, activeDevice: "" }); } catch (e) {}
+    }
+    try { lsRemove("account"); } catch (e) {}
     setAccount(null);
     setPendingSignup(null);
     setPendingCode(null);
@@ -449,7 +609,7 @@ export default function NajahApp() {
   const doneChapters = Object.values(progress).reduce((s, arr) => s + (arr ? arr.length : 0), 0);
   const pct = totalChapters ? Math.round((doneChapters / totalChapters) * 100) : 0;
 
-  const showNav = !["welcome", "signup", "verify", "subscribe", "loading"].includes(view);
+  const showNav = !["welcome", "entry", "signup", "login", "verify", "subscribe", "loading"].includes(view);
 
   return (
     <div dir="rtl" style={{ fontFamily: "'Tajawal', sans-serif", background: BRAND.bg, color: BRAND.text, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -459,17 +619,31 @@ export default function NajahApp() {
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-thumb { background: #D8CFAE; border-radius: 4px; }
         @keyframes spin { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }
+        @keyframes splashPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: 0.85; } }
+        @keyframes payPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(200,155,60,0.55); } 70% { box-shadow: 0 0 0 12px rgba(200,155,60,0); } }
+        @keyframes aiGlow { 0%, 100% { box-shadow: 0 4px 16px rgba(200,155,60,0.4); transform: scale(1); } 50% { box-shadow: 0 4px 24px rgba(200,155,60,0.7); transform: scale(1.015); } }
       `}</style>
 
       <div style={{ flex: 1, paddingBottom: showNav ? 84 : 0, maxWidth: 480, margin: "0 auto", width: "100%" }}>
-        {view === "loading" && <div style={{ minHeight: "100vh" }} />}
+        {view === "loading" && <SplashView />}
 
-        {view === "signup" && <SignupView onSubmit={submitSignup} />}
+        {view === "entry" && (
+          <EntryView
+            onGoSignup={() => setView("signup")}
+            onGoLogin={() => setView("login")}
+          />
+        )}
+
+        {view === "signup" && <SignupView onSubmit={submitSignup} onGoLogin={() => setView("login")} onBack={() => setView("entry")} />}
+
+        {view === "login" && <LoginView onSubmit={submitLogin} onGoSignup={() => setView("signup")} onBack={() => setView("entry")} />}
 
         {view === "verify" && (
           <VerifyView
             phone={pendingSignup ? pendingSignup.phone : ""}
             demoCode={pendingCode}
+            smsSent={smsSent}
+            smsSending={smsSending}
             onVerify={submitVerify}
             onBack={() => setView("signup")}
           />
@@ -479,7 +653,7 @@ export default function NajahApp() {
           <SubscribeView
             firstName={pendingSignup ? pendingSignup.firstName : (account ? account.firstName : "")}
             renewMode={!pendingSignup && !!account}
-            onPay={pendingSignup ? completeSubscription : renewSubscription}
+            onPay={pendingSignup ? startVerification : renewSubscription}
           />
         )}
 
@@ -492,7 +666,8 @@ export default function NajahApp() {
             pct={pct}
             streak={streak}
             onOpenSubject={(s) => { setActiveSubject(s); setView("subjectMenu"); }}
-            onReset={resetAccount}
+            onAbout={() => setView("about")}
+            onReset={logout}
           />
         )}
 
@@ -537,7 +712,7 @@ export default function NajahApp() {
 
         {view === "ai" && <AiSolverView subjects={SUBJECTS} />}
 
-        {view === "progress" && <ProgressView subjects={SUBJECTS} progress={progress} pct={pct} />}
+        {view === "about" && <AboutView onBack={() => setView("subjects")} />}
       </div>
 
       {showNav && <BottomNav view={view} setView={(v) => { setView(v); }} />}
@@ -556,6 +731,22 @@ export default function NajahApp() {
 /* ---------------------------------------------------------------
    لافتة الترحيب
 --------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   شاشة تحميل بسيطة (Splash) عند فتح التطبيق
+--------------------------------------------------------------- */
+function SplashView() {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", background: `linear-gradient(160deg, ${BRAND.greenDark}, ${BRAND.green})`, color: "#fff" }}>
+      <div style={{ animation: "splashPulse 1.4s ease-in-out infinite" }}>
+        <StarBadge size={64} />
+      </div>
+      <div className="najah-heading" style={{ fontSize: 20, fontWeight: 900, marginTop: 16 }}>
+        ناجح <span style={{ color: BRAND.gold }}>بإذن الله</span>
+      </div>
+    </div>
+  );
+}
+
 function WelcomeView({ name, onStart }) {
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "32px 24px", background: `linear-gradient(160deg, ${BRAND.greenDark}, ${BRAND.green})`, color: "#fff", textAlign: "center" }}>
@@ -585,21 +776,58 @@ function WelcomeView({ name, onStart }) {
 }
 
 /* ---------------------------------------------------------------
+   الواجهة الأولى — اختيار بين تسجيل الدخول والاشتراك لأول مرة
+--------------------------------------------------------------- */
+function EntryView({ onGoSignup, onGoLogin }) {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "36px 24px", background: `linear-gradient(160deg, ${BRAND.greenDark}, ${BRAND.green})`, color: "#fff", textAlign: "center" }}>
+      <StarBadge size={78} />
+      <div className="najah-heading" style={{ fontSize: 30, fontWeight: 900, marginTop: 20 }}>
+        ناجح <span style={{ color: BRAND.gold }}>بإذن الله</span>
+      </div>
+      <div style={{ fontSize: 14, opacity: 0.9, marginTop: 10, lineHeight: 1.9, maxWidth: 300 }}>
+        رفيقك الذكي نحو التفوق في البكالوريا — دروس، تمارين، ومساعد ذكاء اصطناعي بين يديك في أي وقت
+      </div>
+
+      <div style={{ width: "100%", maxWidth: 320, marginTop: 40, display: "flex", flexDirection: "column", gap: 14 }}>
+        <button
+          onClick={onGoSignup}
+          style={{ width: "100%", background: BRAND.gold, color: "#4A3410", border: "none", borderRadius: 14, padding: "16px", fontSize: 15.5, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo', sans-serif", boxShadow: "0 6px 18px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+        >
+          <Sparkles size={19} />
+          ابدأ رحلتك الآن — اشتراك جديد
+        </button>
+
+        <button
+          onClick={onGoLogin}
+          style={{ width: "100%", background: "rgba(255,255,255,0.12)", color: "#fff", border: "1.5px solid rgba(255,255,255,0.5)", borderRadius: 14, padding: "16px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo', sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+        >
+          <Lock size={17} />
+          لديّ حساب بالفعل — تسجيل الدخول
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    واجهة إنشاء الحساب (تسجيل الدخول)
 --------------------------------------------------------------- */
-function SignupView({ onSubmit }) {
+function SignupView({ onSubmit, onGoLogin, onBack }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [wilaya, setWilaya] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const inputStyle = { width: "100%", padding: "12px 14px 12px 40px", borderRadius: 12, border: `1px solid ${BRAND.border}`, fontSize: 13.5, fontFamily: "'Tajawal', sans-serif", outline: "none", background: "#fff" };
+  const inputStyle = { width: "100%", padding: "12px 40px 12px 14px", borderRadius: 12, border: `1px solid ${BRAND.border}`, fontSize: 13.5, fontFamily: "'Tajawal', sans-serif", outline: "none", background: "#fff", textAlign: "right" };
   const iconWrapStyle = { position: "relative", marginBottom: 12 };
   const iconStyle = { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: BRAND.subtext };
 
-  const submit = () => {
+  const submit = async () => {
     if (!firstName.trim() || !lastName.trim() || !phone.trim() || !wilaya || !password.trim()) {
       setError("الرجاء تعبئة جميع الخانات");
       return;
@@ -613,7 +841,12 @@ function SignupView({ onSubmit }) {
       return;
     }
     setError("");
-    onSubmit({ firstName: firstName.trim(), lastName: lastName.trim(), phone: phone.trim(), wilaya, password });
+    setSubmitting(true);
+    const err = await onSubmit({ firstName: firstName.trim(), lastName: lastName.trim(), phone: phone.trim(), wilaya, password });
+    if (err) {
+      setError(err);
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -652,20 +885,113 @@ function SignupView({ onSubmit }) {
         </div>
         <div style={iconWrapStyle}>
           <Lock size={16} style={iconStyle} />
-          <input style={inputStyle} placeholder="كلمة السر" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input style={inputStyle} placeholder="كلمة السر" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} />
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 0, cursor: "pointer", color: BRAND.subtext, display: "flex" }}
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
         </div>
 
-        {error && <div style={{ color: "#B03A2E", fontSize: 12, marginBottom: 10, textAlign: "center" }}>{error}</div>}
+        {error && <div style={{ color: "#B03A2E", fontSize: 12, marginBottom: 10, textAlign: "center", lineHeight: 1.8 }}>{error}</div>}
 
         <button
           onClick={submit}
-          style={{ width: "100%", background: "#1565C0", color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo', sans-serif", marginTop: 6 }}
+          disabled={submitting}
+          style={{ width: "100%", background: "#1565C0", color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontSize: 14.5, fontWeight: 800, cursor: submitting ? "default" : "pointer", fontFamily: "'Cairo', sans-serif", marginTop: 6, opacity: submitting ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
         >
+          {submitting && <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} />}
           التالي
         </button>
         <div style={{ fontSize: 11, color: BRAND.subtext, textAlign: "center", marginTop: 10, lineHeight: 1.8 }}>
           سنرسل لك رمزاً سرياً على رقم هاتفك للتأكد من صحته
         </div>
+        <button onClick={onGoLogin} style={{ width: "100%", background: "none", border: "none", color: BRAND.green, fontSize: 12.5, fontWeight: 700, cursor: "pointer", marginTop: 16 }}>
+          هل لديك حساب مسبقاً؟ سجّل الدخول
+        </button>
+        <button onClick={onBack} style={{ width: "100%", background: "none", border: "none", color: BRAND.subtext, fontSize: 11.5, cursor: "pointer", marginTop: 8 }}>
+          ← الرجوع للصفحة الرئيسية
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   واجهة تسجيل الدخول (لجهاز جديد بحساب موجود)
+--------------------------------------------------------------- */
+function LoginView({ onSubmit, onGoSignup, onBack }) {
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const inputStyle = { width: "100%", padding: "12px 40px 12px 14px", borderRadius: 12, border: `1px solid ${BRAND.border}`, fontSize: 13.5, fontFamily: "'Tajawal', sans-serif", outline: "none", background: "#fff", textAlign: "right" };
+  const iconWrapStyle = { position: "relative", marginBottom: 12 };
+  const iconStyle = { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: BRAND.subtext };
+
+  const submit = async () => {
+    if (!phone.trim() || !password.trim()) {
+      setError("الرجاء إدخال رقم الهاتف وكلمة السر");
+      return;
+    }
+    setError("");
+    setSubmitting(true);
+    const err = await onSubmit(phone.trim(), password);
+    if (err) {
+      setError(err);
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: BRAND.bg, padding: "36px 20px" }}>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+        <StarBadge size={54} />
+      </div>
+      <div className="najah-heading" style={{ textAlign: "center", fontWeight: 900, fontSize: 20, color: BRAND.greenDark }}>
+        تسجيل الدخول
+      </div>
+      <div style={{ textAlign: "center", fontSize: 12, color: BRAND.subtext, marginTop: 4, marginBottom: 22, lineHeight: 1.8 }}>
+        سجّل الدخول لحسابك الموجود من جهاز جديد
+      </div>
+
+      <div style={{ maxWidth: 340, margin: "0 auto" }}>
+        <div style={iconWrapStyle}>
+          <Phone size={16} style={iconStyle} />
+          <input style={inputStyle} placeholder="رقم الهاتف" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+        <div style={iconWrapStyle}>
+          <Lock size={16} style={iconStyle} />
+          <input style={inputStyle} placeholder="كلمة السر" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} />
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 0, cursor: "pointer", color: BRAND.subtext, display: "flex" }}
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+
+        {error && <div style={{ color: "#B03A2E", fontSize: 12, marginBottom: 10, textAlign: "center", lineHeight: 1.8 }}>{error}</div>}
+
+        <button
+          onClick={submit}
+          disabled={submitting}
+          style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontSize: 14.5, fontWeight: 800, cursor: submitting ? "default" : "pointer", fontFamily: "'Cairo', sans-serif", marginTop: 6, opacity: submitting ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+        >
+          {submitting && <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} />}
+          دخول
+        </button>
+        <button onClick={onGoSignup} style={{ width: "100%", background: "none", border: "none", color: BRAND.subtext, fontSize: 12.5, fontWeight: 700, cursor: "pointer", marginTop: 16 }}>
+          ليس لديك حساب؟ سجّل حساباً جديداً
+        </button>
+        <button onClick={onBack} style={{ width: "100%", background: "none", border: "none", color: BRAND.subtext, fontSize: 11.5, cursor: "pointer", marginTop: 8 }}>
+          ← الرجوع للصفحة الرئيسية
+        </button>
       </div>
     </div>
   );
@@ -674,7 +1000,7 @@ function SignupView({ onSubmit }) {
 /* ---------------------------------------------------------------
    واجهة التحقق من رمز الهاتف
 --------------------------------------------------------------- */
-function VerifyView({ phone, demoCode, onVerify, onBack }) {
+function VerifyView({ phone, demoCode, smsSent, smsSending, onVerify, onBack }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
@@ -706,9 +1032,22 @@ function VerifyView({ phone, demoCode, onVerify, onBack }) {
         />
         {error && <div style={{ color: "#B03A2E", fontSize: 12, marginTop: 8, textAlign: "center" }}>{error}</div>}
 
-        <div style={{ background: "#FDF3DF", border: `1px dashed ${BRAND.gold}`, borderRadius: 10, padding: "8px 10px", fontSize: 11, color: "#7A5E28", marginTop: 14, textAlign: "center", lineHeight: 1.7 }}>
-          🔧 وضع تجريبي: رمزك هو <b>{demoCode}</b> — سيصلك عبر رسالة SMS حقيقية بعد ربط التطبيق ببوابة إرسال رسائل.
-        </div>
+        {smsSending && (
+          <div style={{ background: "#EAF3EF", border: `1px dashed ${BRAND.green}`, borderRadius: 10, padding: "8px 10px", fontSize: 11.5, color: BRAND.greenDark, marginTop: 14, textAlign: "center", lineHeight: 1.7, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+            جاري إرسال رسالة SMS إلى هاتفك...
+          </div>
+        )}
+        {!smsSending && smsSent && (
+          <div style={{ background: "#EAF3EF", border: `1px solid ${BRAND.green}55`, borderRadius: 10, padding: "8px 10px", fontSize: 11.5, color: BRAND.greenDark, marginTop: 14, textAlign: "center", lineHeight: 1.7 }}>
+            ✅ تم إرسال رمز التحقق برسالة SMS إلى هاتفك.
+          </div>
+        )}
+        {!smsSending && !smsSent && (
+          <div style={{ background: "#FDF3DF", border: `1px dashed ${BRAND.gold}`, borderRadius: 10, padding: "8px 10px", fontSize: 11, color: "#7A5E28", marginTop: 14, textAlign: "center", lineHeight: 1.7 }}>
+            🔧 تعذّر إرسال SMS حقيقي الآن، لكن رمزك هو <b>{demoCode}</b> حتى تقدر تكمل.
+          </div>
+        )}
 
         <button
           onClick={submit}
@@ -774,7 +1113,7 @@ function SubscribeView({ firstName, renewMode, onPay }) {
         <button
           onClick={pay}
           disabled={paying}
-          style={{ width: "100%", background: BRAND.gold, color: "#4A3410", border: "none", borderRadius: 12, padding: "14px", fontSize: 14.5, fontWeight: 800, cursor: paying ? "default" : "pointer", fontFamily: "'Cairo', sans-serif", marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: paying ? 0.7 : 1 }}
+          style={{ width: "100%", background: BRAND.gold, color: "#4A3410", border: "none", borderRadius: 12, padding: "14px", fontSize: 14.5, fontWeight: 800, cursor: paying ? "default" : "pointer", fontFamily: "'Cairo', sans-serif", marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: paying ? 0.7 : 1, animation: paying ? "none" : "payPulse 2s infinite" }}
         >
           {paying ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <CreditCard size={16} />}
           {paying ? "جاري تأكيد الدفع..." : "ادفع الآن"}
@@ -794,7 +1133,6 @@ function SubscribeView({ firstName, renewMode, onPay }) {
 const NAV = [
   { id: "subjects", label: "المواد", icon: BookOpen, matches: ["subjects", "subjectMenu", "lessons", "lessonVideos", "exercises"] },
   { id: "ai", label: "المساعد الذكي", icon: Sparkles, matches: ["ai"] },
-  { id: "progress", label: "تقدّمي", icon: TrendingUp, matches: ["progress"] },
 ];
 
 function BottomNav({ view, setView }) {
@@ -817,7 +1155,7 @@ function BottomNav({ view, setView }) {
 /* ---------------------------------------------------------------
    صفحة المواد (عمودية)
 --------------------------------------------------------------- */
-function SubjectsHome({ name, progress, pct, streak, onOpenSubject, onReset }) {
+function SubjectsHome({ name, progress, pct, streak, onOpenSubject, onReset, onAbout }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   return (
     <div style={{ padding: "20px 16px" }}>
@@ -870,7 +1208,25 @@ function SubjectsHome({ name, progress, pct, streak, onOpenSubject, onReset }) {
         })}
       </div>
 
-      <div style={{ marginTop: 26, textAlign: "center" }}>
+      <a
+        href={`https://wa.me/?text=${encodeURIComponent("جربت تطبيق ناجح بإذن الله 🌟 فيه دروس وتمارين ومساعد ذكاء اصطناعي لكل مواد الباكالوريا (علوم تجريبية). جرّبه أنت كذلك:\nhttps://najah-app-five.vercel.app")}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "#25D366", color: "#fff", borderRadius: 12, padding: "12px 14px", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+      >
+        <Share2 size={17} />
+        شارك التطبيق مع صديق
+      </a>
+
+      <button
+        onClick={onAbout}
+        style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "none", border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: "11px 14px", fontSize: 12.5, fontWeight: 700, color: BRAND.subtext, cursor: "pointer" }}
+      >
+        <Info size={15} />
+        عن التطبيق وسياسة الخصوصية
+      </button>
+
+      <div style={{ marginTop: 18, textAlign: "center" }}>
         {!confirmingReset ? (
           <button onClick={() => setConfirmingReset(true)} style={{ background: "none", border: "none", color: BRAND.subtext, fontSize: 11.5, cursor: "pointer", textDecoration: "underline" }}>
             هذا ليس حسابي — سجّل من جديد
@@ -1005,58 +1361,107 @@ function LessonVideosView({ subject, chapterIndex, onBack }) {
    صفحة التمارين / الباكالوريات
 --------------------------------------------------------------- */
 function ExercisesView({ subject, mode, onBack, onAsk }) {
-  const [openIdx, setOpenIdx] = useState(null);
+  const [selected, setSelected] = useState(null); // null = قائمة، رقم = تمرين محدد
+  const [showSolution, setShowSolution] = useState(false);
   const list = mode === "bac" ? subject.bac : subject.exercises;
-  const title = mode === "bac" ? `باكالوريات ${subject.name}` : `تمارين ${subject.name}`;
+  const listTitle = mode === "bac" ? `باكالوريات ${subject.name}` : `تمارين ${subject.name}`;
+  const itemLabel = (idx, item) =>
+    mode === "bac" ? (item.year ? `بكالوريا ${item.year}` : `بكالوريا ${idx + 1}`) : `تمرين ${idx + 1}`;
 
+  // ------- شاشة قائمة التمارين/الباكالوريات -------
+  if (selected === null) {
+    return (
+      <div>
+        <TopBar title={listTitle} color={subject.color} onBack={onBack} />
+        <div style={{ padding: "16px" }}>
+          <div style={{ fontSize: 11.5, color: BRAND.subtext, marginBottom: 12, lineHeight: 1.8 }}>
+            {mode === "bac"
+              ? "دفعة أولى من مواضيع البكالوريا الرسمية السابقة (2010–2026) — سيتم إضافة المزيد تباعاً."
+              : "دفعة أولى من التمارين المشروحة — يتوسّع العدد تدريجياً حتى 200 تمرين."}
+          </div>
+
+          {list.length === 0 && (
+            <div style={{ textAlign: "center", color: BRAND.subtext, fontSize: 12.5, padding: "26px 10px", lineHeight: 1.8 }}>
+              المحتوى قادم قريباً لهذا القسم. جرّب المساعد الذكي إذا عندك سؤال الآن.
+            </div>
+          )}
+
+          {list.map((ex, idx) => (
+            <button
+              key={idx}
+              onClick={() => { setSelected(idx); setShowSolution(false); }}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, background: BRAND.card, border: `1px solid ${BRAND.border}`, borderRadius: 12, padding: "13px 14px", marginBottom: 9, cursor: "pointer", textAlign: "right" }}
+            >
+              <div style={{ width: 34, height: 34, borderRadius: "999px", background: subject.color + "1A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: subject.color, fontWeight: 800, fontSize: 13 }}>
+                {idx + 1}
+              </div>
+              <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>{itemLabel(idx, ex)}</div>
+              <ArrowRight size={17} color={BRAND.subtext} style={{ transform: "rotate(180deg)" }} />
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ------- شاشة تمرين محدد (السؤال + الحل في خانة منفصلة) -------
+  const ex = list[selected];
   return (
     <div>
-      <TopBar title={title} color={subject.color} onBack={onBack} />
+      <TopBar title={itemLabel(selected, ex)} color={subject.color} onBack={() => setSelected(null)} />
       <div style={{ padding: "16px" }}>
-        <div style={{ fontSize: 11.5, color: BRAND.subtext, marginBottom: 12, lineHeight: 1.8 }}>
-          {mode === "bac"
-            ? "دفعة أولى من مواضيع البكالوريا الرسمية السابقة — سيتم إضافة المزيد تباعاً."
-            : "دفعة أولى من التمارين المشروحة — يتوسّع العدد تدريجياً."}
+        <div style={{ background: BRAND.card, border: `1px solid ${BRAND.border}`, borderRadius: 14, padding: "14px", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Dumbbell size={17} color={subject.color} />
+            <div style={{ fontSize: 12, fontWeight: 800, color: subject.color, flex: 1 }}>نص التمرين</div>
+          </div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.9 }}>{ex.q}</div>
         </div>
 
-        {list.length === 0 && (
-          <div style={{ textAlign: "center", color: BRAND.subtext, fontSize: 12.5, padding: "26px 10px", lineHeight: 1.8 }}>
-            المحتوى قادم قريباً لهذا القسم. جرّب المساعد الذكي إذا عندك سؤال الآن.
-          </div>
-        )}
+        <button
+          onClick={() => onAsk(`${itemLabel(selected, ex)}:\n${ex.q}`)}
+          style={{
+            width: "100%",
+            marginBottom: 14,
+            background: `linear-gradient(135deg, ${BRAND.gold}, #E8C874)`,
+            color: "#4A3410",
+            border: "none",
+            borderRadius: 14,
+            padding: "13px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            fontSize: 13,
+            fontWeight: 800,
+            fontFamily: "'Cairo', sans-serif",
+            cursor: "pointer",
+            boxShadow: "0 4px 16px rgba(200,155,60,0.4)",
+            animation: "aiGlow 2.4s ease-in-out infinite",
+          }}
+        >
+          <Sparkles size={18} />
+          اسأل المساعد الذكي عن هذا التمرين
+        </button>
 
-        {list.map((ex, idx) => (
-          <div key={idx} style={{ background: BRAND.card, border: `1px solid ${BRAND.border}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "13px 13px 10px" }}>
-              <Dumbbell size={17} color={subject.color} style={{ marginTop: 2, flexShrink: 0 }} />
-              <div style={{ flex: 1, fontSize: 13.5, fontWeight: 600, lineHeight: 1.8 }}>{ex.q}</div>
-              <button
-                onClick={() => onAsk(ex.q)}
-                title="اسأل الذكاء الاصطناعي"
-                style={{ width: 30, height: 30, borderRadius: "999px", background: BRAND.gold, border: "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}
-              >
-                <HelpCircle size={16} color="#4A3410" />
+        <div style={{ background: BRAND.card, border: `1px solid ${BRAND.border}`, borderRadius: 14, padding: "14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: showSolution ? 8 : 0 }}>
+            <CheckCircle2 size={17} color={subject.color} />
+            <div style={{ fontSize: 12, fontWeight: 800, color: subject.color, flex: 1 }}>الحل</div>
+            {!showSolution && (
+              <button onClick={() => setShowSolution(true)} style={{ background: subject.color, color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                إظهار الحل
               </button>
-            </div>
-
-            <div style={{ display: "flex", borderTop: `1px dashed ${BRAND.border}` }}>
-              <div style={{ flex: 1, padding: "10px 12px", borderLeft: `1px dashed ${BRAND.border}` }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, color: subject.color, marginBottom: 4 }}>التمرين</div>
-                <div style={{ fontSize: 12, color: BRAND.subtext, lineHeight: 1.8, maxHeight: 120, overflowY: "auto" }}>{ex.q}</div>
-              </div>
-              <div style={{ flex: 1, padding: "10px 12px" }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, color: subject.color, marginBottom: 4 }}>الحل</div>
-                {openIdx === idx ? (
-                  <div style={{ fontSize: 12, color: BRAND.subtext, lineHeight: 1.8, maxHeight: 120, overflowY: "auto" }}>{ex.a}</div>
-                ) : (
-                  <button onClick={() => setOpenIdx(idx)} style={{ background: "none", border: "none", color: subject.color, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>
-                    إظهار الحل
-                  </button>
-                )}
-              </div>
-            </div>
+            )}
           </div>
-        ))}
+          {showSolution && (
+            <div style={{ fontSize: 13, color: BRAND.text, lineHeight: 1.9 }}>{ex.a}</div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 14, fontSize: 11.5, color: BRAND.subtext, textAlign: "center", lineHeight: 1.8 }}>
+          ما فهمتش الحل؟ اضغط 🟡 بجانب التمرين ليشرحلك المساعد الذكي بطريقة أبسط.
+        </div>
       </div>
     </div>
   );
@@ -1071,7 +1476,7 @@ function AiAskModal({ subject, initialText, onClose }) {
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef(null);
 
-  const systemPrompt = `أنت أستاذ جزائري متخصص في مادة "${subject.name}" لتلاميذ السنة الثالثة ثانوي شعبة علوم تجريبية، تحضيراً لامتحان البكالوريا. مهمتك شرح التمرين التالي بطريقة مبسطة جداً وودودة خطوة بخطوة، كأنك تشرح لتلميذ متعثر لأول مرة، دون تعقيد. اختم بالنتيجة النهائية بوضوح، وشجّع التلميذ.`;
+  const systemPrompt = `أنت أستاذ جزائري متخصص في مادة "${subject.name}" لتلاميذ السنة الثالثة ثانوي شعبة علوم تجريبية، تحضيراً لامتحان البكالوريا. الحلول الرسمية للوزارة عادة تعطي الجواب النهائي فقط بخطوات مختصرة جداً بدون شرح واضح للمنطق وراءها، ومهمتك الأساسية هي سد هذه الفجوة: اشرح كيف نصل لهذا الحل خطوة بخطوة بطريقة مبسطة جداً وودودة، كأنك تشرح لتلميذ متعثر لأول مرة، دون تعقيد. اختم بالنتيجة النهائية بوضوح، وشجّع التلميذ.`;
 
   useEffect(() => {
     (async () => {
@@ -1278,6 +1683,63 @@ function ProgressView({ subjects, progress, pct }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   عن التطبيق وسياسة الخصوصية
+--------------------------------------------------------------- */
+function AboutView({ onBack }) {
+  const Section = ({ title, children }) => (
+    <div style={{ background: BRAND.card, border: `1px solid ${BRAND.border}`, borderRadius: 14, padding: "14px 16px", marginBottom: 12 }}>
+      <div className="najah-heading" style={{ fontWeight: 800, fontSize: 14, color: BRAND.green, marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 12.5, color: BRAND.text, lineHeight: 2 }}>{children}</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <TopBar title="عن التطبيق" color={BRAND.green} onBack={onBack} />
+      <div style={{ padding: "16px" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+          <StarBadge size={56} />
+        </div>
+
+        <Section title="من نحن">
+          "ناجح بإذن الله" تطبيق تعليمي جزائري يهدف لمساعدة تلاميذ البكالوريا على المذاكرة بطريقة منظمة وفعالة: دروس حسب المنهج الوزاري، تمارين مشروحة، مواضيع بكالوريا سابقة، وفيديوهات لأفضل الأساتذة على يوتيوب — كل هذا في مكان واحد.
+        </Section>
+
+        <Section title="الميزة المميزة: المساعد الذكي">
+          إذا تعثّر التلميذ في فهم تمرين، يقدر يسأل المساعد الذكي المدمج في التطبيق ليشرحله الحل خطوة بخطوة بأسلوب مبسط، بدل ما يتوقف عند الدرس أو يتخطى التمرين.
+        </Section>
+
+        <Section title="سياسة الخصوصية — ما نجمعه من معلومات">
+          عند التسجيل، نجمع فقط: الاسم واللقب، رقم الهاتف، الولاية، وكلمة السر الخاصة بحسابك. نستعمل هذه المعلومات حصرياً لإدارة حسابك واشتراكك، ولا نبيعها ولا نشاركها مع أي طرف ثالث لأغراض تجارية.
+        </Section>
+
+        <Section title="المساعد الذكي وخصوصيتك">
+          عندما تسأل المساعد الذكي عن تمرين، يُرسل نص سؤالك إلى خدمة ذكاء اصطناعي (Claude من Anthropic) لتوليد الشرح فقط، ولا يُستعمل هذا النص لأي غرض آخر.
+        </Section>
+
+        <Section title="الاشتراك والدفع">
+          الاشتراك سنوي مقابل مبلغ محدد يمنحك الوصول الكامل لكل الدروس والتمارين والمساعد الذكي بدون حدود. التفاصيل الكاملة لطرق الدفع تظهر داخل شاشة الاشتراك.
+        </Section>
+
+        <Section title="تواصل معنا">
+          إذا عندك أي سؤال أو ملاحظة، تقدر تتواصل معنا مباشرة عبر واتساب.
+        </Section>
+
+        <a
+          href={`https://wa.me/?text=${encodeURIComponent("مرحباً، عندي سؤال بخصوص تطبيق ناجح بإذن الله.")}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "#25D366", color: "#fff", borderRadius: 12, padding: "12px 14px", fontSize: 13, fontWeight: 700, textDecoration: "none", marginTop: 4 }}
+        >
+          <Share2 size={16} />
+          راسلنا عبر واتساب
+        </a>
       </div>
     </div>
   );
