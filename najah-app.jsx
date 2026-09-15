@@ -93,11 +93,9 @@ async function fetchStudentFromFirestore(phone) {
 }
 
 /* ---------------------------------------------------------------
-   إرسال SMS حقيقي عبر SMS Gateway for Android (sms-gate.app)
+   إرسال SMS حقيقي — عبر وسيط (Serverless Function) على Vercel
+   يتفادى قيود CORS ويخبّي بيانات اعتماد SMS Gateway عن المتصفح
 --------------------------------------------------------------- */
-const SMS_GATE_USERNAME = "JX6S5J";
-const SMS_GATE_PASSWORD = "k46ng2_j4aoklx";
-
 // تحويل رقم هاتف جزائري (0XXXXXXXXX) إلى صيغة دولية (+213XXXXXXXXX)
 function toInternationalPhone(phone) {
   const digits = (phone || "").replace(/[^0-9]/g, "");
@@ -109,18 +107,13 @@ function toInternationalPhone(phone) {
 // إرسال رمز التحقق عبر SMS حقيقي؛ يرجع true عند النجاح، false عند أي فشل (بدون توقف التسجيل)
 async function sendRealSms(phone, code) {
   try {
-    const res = await fetch("https://api.sms-gate.app/3rdparty/v1/messages", {
+    const res = await fetch("/api/send-sms", {
       method: "POST",
-      headers: {
-        Authorization: "Basic " + btoa(`${SMS_GATE_USERNAME}:${SMS_GATE_PASSWORD}`),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        textMessage: { text: `رمزك في تطبيق ناجح بإذن الله هو: ${code}` },
-        phoneNumbers: [toInternationalPhone(phone)],
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: toInternationalPhone(phone), code }),
     });
-    return res.ok;
+    const data = await res.json();
+    return !!data.ok;
   } catch (e) {
     console.warn("تعذّر إرسال SMS حقيقي، سيُعرض الرمز على الشاشة بدلاً منه", e);
     return false;
